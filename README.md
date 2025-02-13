@@ -1,4 +1,4 @@
-# Team WWU_Muenster 2022 Software Tool
+
 
 ## Introduction:
 The goal of metabolic engineering for industrial applications is the overproduction of metabolites with the help of organisms. While the field originated from single modifications in metabolic pathways, today’s approaches for metabolic engineering include a much more systematic view on biological systems. This is largely fueled by advances in computational methods ([Woolston, Edgar and Stephanopoulos, 2013](https://www.annualreviews.org/doi/10.1146/annurev-chembioeng-061312-103312)). One of the most prominent computational methods in metabolic engineering is flux balance analysis (FBA) of genome-scale metabolic models (GSMMs). In brief, GSMMs are mathematical representations of all known chemical reactions within an organism. FBA calculates the respective fluxes through all the reactions of a GSMM, based on certain mathematical constraints ([Orth, Thiele and Palsson, 2010](https://www.nature.com/articles/nbt.1614#MOESM178)). To learn more about the general background of FBA and GSMMs, take a look at our [modeling page](https://2022.igem.wiki/wwu-muenster/model). 
