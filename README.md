@@ -17,4 +17,4 @@
 8. Type in `python run_FSEOF.py NameOfYourSBMLFile BiomassID reactionID` and press enter. The results are stored in an Excel file
 > **Example:** `python run_FSEOF.py yeast_gem.xml r_4041 r_426`
 
-> ** OR:** python FSEOF_self.py yeast_gem.xml biomass r_4041
+> **OR:** python FSEOF_self.py yeast_gem.xml biomass r_4041
