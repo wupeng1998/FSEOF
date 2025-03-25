@@ -7,7 +7,7 @@ from cobra.io import read_sbml_model
 def fseof_analysis(model_path, biomass_reaction, objective_reaction):
     """
     进行FSEOF分析并输出强化、弱化和敲除靶点到Excel文件。
-
+    
     参数:
         model_path (str): SBML模型文件路径
         objective_reaction (str): 目标反应ID
@@ -28,180 +28,119 @@ def fseof_analysis(model_path, biomass_reaction, objective_reaction):
     # 设置通量水平
     max_enforced_flux = 0.9
     max_flux = max_theoretical_flux * max_enforced_flux
-    initial_flux = 0
     number_of_results = 10
-    levels = [initial_flux + (i + 1) * (max_flux - initial_flux) / number_of_results for i in range(number_of_results)]
+    levels = [ (i + 1) * (max_flux) / number_of_results for i in range(number_of_results)]
     print(f"通量水平: {levels}")
     
-    # 计算不同通量水平下的代谢网络
+    # 计算不同通量水平下的代谢网络，利用with上下文隔离模型修改
     df_list = []
     for f in levels:
         with model:
             model.reactions.get_by_id(objective_reaction).bounds = (f, f)
             model.objective = biomass_reaction_obj
-            pfba_solution = pfba(model)
-            pfba_solution = pfba_solution.to_frame()
-            pfba_solution.drop('reduced_costs', axis=1, inplace=True)
-            df_list.append(pfba_solution)
+            sol = pfba(model)
+            # 转换为DataFrame并去除'reduced_costs'列
+            sol_df = sol.to_frame()
+            sol_df.drop('reduced_costs', axis=1, inplace=True)
+            df_list.append(sol_df)
     
+    # 合并不同通量水平下的结果，列名为1~10
     df_new = pd.concat(df_list, axis=1)
-    df_new.columns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    df_new.columns = list(range(1, number_of_results+1))
     df_new.fillna(value=0, inplace=True)
     
-    # 数据处理
-    remove_rea = ['GLCtex_copy1', 'NH4tex', 'NH4tpp', 'H2Otex', 'H2Otpp', 'EX_h2o_e', 'O2tpp', 'O2tex', 'EX_o2_e', 'CO2tpp', 'CO2tex', 'Htex', 'EX_h_e', 'ADD_H_c-tex', 'ADD_EX_h_c']
-    weight = ['ATPM', 'TPI', 'ENO', 'PGM', 'PGK', 'GLCtex_copy1', 'NH4tex', 'NH4tpp', 'EX_nh4_e', 'H2Otex', 'H2Otpp', 'EX_h2o_e', 'O2tpp', 'O2tex', 'EX_o2_e', 'CO2tpp', 'CO2tex', 'EX_co2_e', 'Htex', 'EX_h_e', 'ADD_H_c-tex', 'ADD_EX_h_c']
+    # --- 优化数据处理部分 ---
+    # 1. 去除所有通量绝对值均<=1e-5的行（向量化操作）
+    mask_all_zero = (df_new.abs() <= 1e-5).all(axis=1)
+    df_new = df_new.loc[~mask_all_zero]
+    
+    # 2. 删除指定的反应行
+    remove_rea = ['GLCtex_copy1', 'NH4tex', 'NH4tpp', 'H2Otex', 'H2Otpp',
+                  'EX_h2o_e', 'O2tpp', 'O2tex', 'EX_o2_e', 'CO2tpp', 'CO2tex',
+                  'Htex', 'EX_h_e', 'ADD_H_c-tex', 'ADD_EX_h_c']
+    df_new.drop(index=remove_rea, errors='ignore', inplace=True)
+    
+    # 3. 批量调整权重
+    weight = ['ATPM', 'TPI', 'ENO', 'PGM', 'PGK', 'GLCtex_copy1', 'NH4tex', 'NH4tpp',
+              'EX_nh4_e', 'H2Otex', 'H2Otpp', 'EX_h2o_e', 'O2tpp', 'O2tex',
+              'EX_o2_e', 'CO2tpp', 'CO2tex', 'EX_co2_e', 'Htex', 'EX_h_e',
+              'ADD_H_c-tex', 'ADD_EX_h_c']
     lose_weight = ['F6PA', 'FBA3', 'EDA', 'XYLI2']
+    flux_cols = list(range(1, number_of_results+1))
     
-    # 去掉通量绝对值小于等于1e-5的行
-    for i in df_new.index:
-        n = 0
-        for v in df_new.loc[i]:
-            if abs(v) <= 1e-5:
-                n += 1
-        if n == 10:
-            df_new.drop(i, inplace=True)
-    
-        for re_rea in remove_rea:      #删除指定的反应行
-            if i == re_rea:
-                try:
-                    df_new.drop(i,inplace=True)
-                except:
-                    pass
-    
-    # 调整权重
-    for ii in df_new.index:
-        for weight_1 in weight:
-            if ii == weight_1:
-                df_new.loc[ii, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]] = df_new.loc[ii, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]] * 1000
-        for lose_weight_1 in lose_weight:
-            if ii == lose_weight_1:
-                df_new.loc[ii, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]] = df_new.loc[ii, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]] / 50
+    # 注意：df_new的索引为反应ID（字符串）
+    df_new.loc[df_new.index.isin(weight), flux_cols] = df_new.loc[df_new.index.isin(weight), flux_cols] * 1000
+    df_new.loc[df_new.index.isin(lose_weight), flux_cols] = df_new.loc[df_new.index.isin(lose_weight), flux_cols] / 50
     
     df_new = df_new.round(5)
     
-    # 插入反应方程式列
-    fseof_rea = []
-    for i in df_new.index:
-        r = model.reactions.get_by_id(i)
-        fseof_rea.append(r.reaction)
-    df_new.insert(0, 'reactions', fseof_rea)
+    # 插入反应方程式列（利用列表解析，速度较快）
+    reaction_equations = []
+    for rxn_id in df_new.index:
+        try:
+            reaction_equation = model.reactions.get_by_id(rxn_id).reaction
+        except Exception:
+            reaction_equation = ""
+        reaction_equations.append(reaction_equation)
+    df_new.insert(0, 'reactions', reaction_equations)
     
-    # 筛选强化靶点
-    upregulated = []
-    for key_up, row_up in df_new.iterrows():
-        max_value = max(list(abs(row_up[1:11])))
-        value_initial = df_new.loc[key_up][1]
-        value_end = df_new.loc[key_up][10]
-        
-        if value_initial * value_end >= 0 and abs(value_end) > abs(value_initial):
-            if max_value == abs(value_end):
-                upregulated.append(key_up)
-            elif ((max_value - abs(value_end)) / max_value) < 0.1:
-                upregulated.append(key_up)
+    # 计算额外指标：初始值、末值、最大、最小绝对值（向量化计算）
+    df_new['abs_initial'] = df_new[1].abs()
+    df_new['abs_end'] = df_new[number_of_results].abs()
+    df_new['max_abs'] = df_new[flux_cols].abs().max(axis=1)
+    df_new['min_abs'] = df_new[flux_cols].abs().min(axis=1)
     
-    # 筛选弱化靶点
-    downregulated = []
-    for key_down, row_down in df_new.iterrows():
-        min_value = min(list(abs(row_down[1:11])))
-        value_initial = df_new.loc[key_down][1]
-        value_end = df_new.loc[key_down][10]
-        
-        if value_initial * value_end >= 0 and abs(value_end) < abs(value_initial):
-            if min_value == abs(value_end):
-                downregulated.append(key_down)
+    # 筛选强化靶点（upregulated）
+    # 条件：初末符号一致且末端绝对值增大，同时末端接近最大值
+    mask_up = (df_new[1] * df_new[number_of_results] >= 0) & \
+              (df_new['abs_end'] > df_new['abs_initial']) & (
+                  (df_new['max_abs'] == df_new['abs_end']) | 
+                  (((df_new['max_abs'] - df_new['abs_end']) / df_new['max_abs']) < 0.1)
+              )
+    upregulated = df_new.index[mask_up]
     
-    # 筛选敲除靶点
-    knockout = []
-    for key_ko, row_ko in df_new.iterrows():
-        value_end = df_new.loc[key_ko][10]
-        if value_end == 0 and df_new.loc[key_ko][1] != 0:
-            knockout.append(key_ko)
+    # 筛选弱化靶点（downregulated）
+    mask_down = (df_new[1] * df_new[number_of_results] >= 0) & \
+                (df_new['abs_end'] < df_new['abs_initial']) & \
+                (df_new['min_abs'] == df_new['abs_end'])
+    downregulated = df_new.index[mask_down]
     
-    # 准备输出数据
-    upregulated_data = []
-    for i in upregulated:
-        reaction = model.reactions.get_by_id(i)
-        row = [
-            i,
-            reaction.reaction,
-            [ge.id for ge in reaction.genes],
-            df_new.loc[i][1],
-            df_new.loc[i][2],
-            df_new.loc[i][3],
-            df_new.loc[i][4],
-            df_new.loc[i][5],
-            df_new.loc[i][6],
-            df_new.loc[i][7],
-            df_new.loc[i][8],
-            df_new.loc[i][9],
-            df_new.loc[i][10]
-        ]
-        upregulated_data.append(row)
+    # 筛选敲除靶点（knockout）：末端通量为0且初始非0
+    mask_ko = (df_new[number_of_results] == 0) & (df_new[1] != 0)
+    knockout = df_new.index[mask_ko]
     
-    downregulated_data = []
-    for i in downregulated:
-        reaction = model.reactions.get_by_id(i)
-        row = [
-            i,
-            reaction.reaction,
-            [ge.id for ge in reaction.genes],
-            df_new.loc[i][1],
-            df_new.loc[i][2],
-            df_new.loc[i][3],
-            df_new.loc[i][4],
-            df_new.loc[i][5],
-            df_new.loc[i][6],
-            df_new.loc[i][7],
-            df_new.loc[i][8],
-            df_new.loc[i][9],
-            df_new.loc[i][10]
-        ]
-        downregulated_data.append(row)
+    # 辅助函数：构造输出数据（对每个反应调用model.reactions.get_by_id获取反应详细信息）
+    def build_output_data(rxn_ids):
+        data = []
+        for rxn_id in rxn_ids:
+            try:
+                rxn = model.reactions.get_by_id(rxn_id)
+                genes = [gene.id for gene in rxn.genes]
+                reaction_equation = rxn.reaction
+            except Exception:
+                genes = []
+                reaction_equation = ""
+            row = [rxn_id, reaction_equation, genes] + [df_new.loc[rxn_id, col] for col in flux_cols]
+            data.append(row)
+        return data
     
-    knockout_data = []
-    for i in knockout:
-        reaction = model.reactions.get_by_id(i)
-        row = [
-            i,
-            reaction.reaction,
-            [ge.id for ge in reaction.genes],
-            df_new.loc[i][1],
-            df_new.loc[i][2],
-            df_new.loc[i][3],
-            df_new.loc[i][4],
-            df_new.loc[i][5],
-            df_new.loc[i][6],
-            df_new.loc[i][7],
-            df_new.loc[i][8],
-            df_new.loc[i][9],
-            df_new.loc[i][10]
-        ]
-        knockout_data.append(row)
+    upregulated_data = build_output_data(upregulated)
+    downregulated_data = build_output_data(downregulated)
+    knockout_data = build_output_data(knockout)
     
-    # 创建DataFrame
-    upregulated_df = pd.DataFrame(upregulated_data, columns=[
-        'Reaction ID', 'Reaction', 'Genes', 'Flux 1', 'Flux 2', 'Flux 3', 'Flux 4', 'Flux 5',
-        'Flux 6', 'Flux 7', 'Flux 8', 'Flux 9', 'Flux 10'
-    ])
+    # 创建DataFrame并输出到Excel
+    columns = ['Reaction ID', 'Reaction', 'Genes'] + [f'Flux {i}' for i in flux_cols]
+    upregulated_df = pd.DataFrame(upregulated_data, columns=columns)
+    downregulated_df = pd.DataFrame(downregulated_data, columns=columns)
+    knockout_df = pd.DataFrame(knockout_data, columns=columns)
     
-    downregulated_df = pd.DataFrame(downregulated_data, columns=[
-        'Reaction ID', 'Reaction', 'Genes', 'Flux 1', 'Flux 2', 'Flux 3', 'Flux 4', 'Flux 5',
-        'Flux 6', 'Flux 7', 'Flux 8', 'Flux 9', 'Flux 10'
-    ])
-    
-    knockout_df = pd.DataFrame(knockout_data, columns=[
-        'Reaction ID', 'Reaction', 'Genes', 'Flux 1', 'Flux 2', 'Flux 3', 'Flux 4', 'Flux 5',
-        'Flux 6', 'Flux 7', 'Flux 8', 'Flux 9', 'Flux 10'
-    ])
-    
-    # 输出到Excel
-    with pd.ExcelWriter(f'FSEOF_{objective_reaction}_results.xlsx') as writer:
+    output_filename = f'FSEOF_{objective_reaction}_results.xlsx'
+    with pd.ExcelWriter(output_filename) as writer:
         upregulated_df.to_excel(writer, sheet_name='Upregulated', index=False)
         downregulated_df.to_excel(writer, sheet_name='Downregulated', index=False)
         knockout_df.to_excel(writer, sheet_name='Knockout', index=False)
     
-    print(f"FSEOF分析完成，结果已保存到 FSEOF_{objective_reaction}_results.xlsx")
+    print(f"FSEOF分析完成，结果已保存到 {output_filename}")
 
 if __name__ == "__main__":
     # 命令行参数解析
